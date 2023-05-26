@@ -1,0 +1,183 @@
+import os
+import re
+import random
+import string
+import subprocess
+from collections import defaultdict
+
+# your settings
+directory = '/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Test'
+exclude_dirs = ['/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vova/Daily Notes', 
+                '/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vova/Templates']
+
+link_regex = re.compile(r'\[\[(.*?)\]\]')
+relation_regex = re.compile(r'(Parent|Sibling|Child):: (.*?)\n')
+block_id_regex = re.compile(r'   \^id[0-9A-Za-z]{9}')
+
+# dictionaries to hold the relationships
+parent_notes = defaultdict(set)
+child_notes = defaultdict(set)
+sibling_notes = defaultdict(set)
+
+block_relation_map = {}
+block_origin_map = {}
+
+# First pass: clean up the file and map the relationships between block ids
+for root, dirs, files in os.walk(directory):
+    for filename in files:
+        filepath = os.path.join(root, filename)
+        if filename.endswith('.md'):
+            print(f"Processing file: {filename}")
+            with open(filepath, 'r') as file:
+                content = file.readlines()
+
+            new_content = []
+            for line in content:
+                if not line.startswith(('Parent::', 'Child::', 'Sibling::'))or line.strip() == '---':
+                    if line.strip() == '' and (not new_content or new_content[-1].strip() != ''):
+                        new_content.append(line)
+                    block_id_regex = re.compile(r'\^id[0-9A-Za-z]{9}')
+                    cleaned_line = block_id_regex.sub('', line)  # remove previous ids
+                    cleaned_line_stripped = cleaned_line.strip()  # remove whitespace from start and end of the line
+                    if link_regex.findall(cleaned_line_stripped):  # if there are any links in the line
+                        new_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=9))  # generate a new id
+                        cleaned_line = cleaned_line.rstrip() + f'   ^id{new_id}\n'  # add new id to line
+                    new_content.append(cleaned_line)
+                    
+                    
+
+            with open(filepath, 'w') as file:
+                file.writelines(new_content)
+
+# Second pass: gather the parent, child, and sibling relationships
+for root, dirs, files in os.walk(directory):
+    for filename in files:
+        filepath = os.path.join(root, filename)
+        if filename.endswith('.md'):
+            print(f"Processing file: {filename}")
+            with open(filepath, 'r') as file:
+                content = file.readlines()
+
+                if content:
+                    previous_links = [[] for _ in range(len(content))]
+
+                relations = relation_regex.findall(''.join(content))
+                for relation in relations:
+                    if relation[0] == 'Parent':
+                        parent_notes[filename[:-3]].update(relation[1].split(' - '))
+                    elif relation[0] == 'Child':
+                        child_notes[filename[:-3]].update(relation[1].split(' - '))
+
+                for i, line in enumerate(content):  # Enumerate over the content to keep track of the current line number
+                    indent_level = len(line) - len(line.lstrip())
+
+                # Add the new conditionals here
+                    if indent_level == 0:
+                            previous_links = [[] for _ in range(len(content))]
+
+                    matches = link_regex.findall(line)
+                    matches = [match.replace('[[', '').replace(']]', '') for match in matches]
+                    if matches:
+                        while len(previous_links) <= indent_level:
+                            previous_links.append([])
+                        previous_links[indent_level] = matches
+                        for match in matches:
+                            if indent_level > 0:
+                                for level in range(indent_level):
+                                    for previous_link in previous_links[level]:
+                                        parent_notes[match].add(previous_link)
+                                        child_notes[previous_link].add(match)
+                            # Only consider bullet point lines for siblings
+                            if line.strip().startswith('-'):
+                                for sibling_link in previous_links[indent_level]:
+                                    if sibling_link != match:
+                                        sibling_notes[match].add(sibling_link)
+                                        sibling_notes[sibling_link].add(match)
+
+            prev_indent_level = 0
+            prev_block_id = None
+            for i, line in enumerate(content):
+                indent_level = len(line) - len(line.lstrip())
+                matches = link_regex.findall(line)
+                matches = [match.replace('[[', '').replace(']]', '') for match in matches]
+                block_ids = block_id_regex.findall(line)
+
+                if matches and block_ids:
+                    while len(previous_links) <= indent_level:
+                            previous_links.append([])
+                            previous_links[indent_level] = matches
+                            for match in matches:
+                                if indent_level > 0:
+                                    for level in range(indent_level):
+                                        for previous_link in previous_links[level]:
+                                            parent_notes[match].add(previous_link)
+                                            child_notes[previous_link].add(match)
+                                # Only consider bullet point lines for siblings
+                                if line.strip().startswith('-'):
+                                    for sibling_link in previous_links[indent_level]:
+                                        if sibling_link != match:
+                                            sibling_notes[match].add(sibling_link)
+                                            sibling_notes[sibling_link].add(match)
+
+                                            print(f"Line: {line}")  # print the line
+
+                                            matches = link_regex.findall(line)
+                                            block_ids = block_id_regex.findall(line)
+
+                                            print(f"Block IDs: {block_ids}")  # print the block ids
+                                            print(f"Matches: {matches}")  # print the matches
+
+                            for block_id in block_ids:
+                                for match in matches:
+                                    if indent_level < prev_indent_level:
+                                        relation = 'parent'
+                                    elif indent_level > prev_indent_level:
+                                        relation = 'child'
+                                    else:
+                                        relation = 'sibling'
+                                    block_relation_map[block_id] = (filename[:-3], match, relation)
+                                    print(f"Block ID: {block_id}, Match: {match}, Relation: {relation}")  # print statement for debugging
+                                    prev_indent_level = indent_level
+                                    prev_block_id = block_id
+
+    
+# Third pass: write the relationships back to the files
+for root, dirs, files in os.walk(directory):
+    for filename in files:
+        filepath = os.path.join(root, filename)
+        if filename.endswith('.md'):
+            with open(filepath, 'r') as file:
+                content = file.readlines()
+
+            new_content = []
+            for line in content:
+                if not line.startswith(('Parent::', 'Child::', 'Sibling::')):
+                    new_content.append(line)
+
+            parent_links = ' - '.join([f'[[{note}]]' for note in parent_notes[filename[:-3]]])
+            sibling_links = ' - '.join([f'[[{note}]]' for note in sibling_notes[filename[:-3]]])
+            child_links = ' - '.join([f'[[{note}]]' for note in child_notes[filename[:-3]]])
+
+            for block_id, (note1, note2, relation_type) in block_relation_map.items():
+                if relation_type == 'parent':
+                    parent_links.append(f'[[{note2}]] [>]({note1}#{block_id})')
+                elif relation_type == 'child':
+                    child_links.append(f'[[{note2}]] [>]({note1}#{block_id})')
+                elif relation_type == 'sibling':
+                    sibling_links.append(f'[[{note2}]] [>]({note1}#{block_id})')
+
+            parent_links = ' - '.join([f'[[{note}]]' for note in parent_notes[filename[:-3]]])
+            sibling_links = ' - '.join([f'[[{note}]]' for note in sibling_notes[filename[:-3]]])
+            child_links = ' - '.join([f'[[{note}]]' for note in child_notes[filename[:-3]]])
+
+            new_content = ["%%\n",
+                            f"Parent:: {parent_links}\n",
+                            f"Sibling:: {sibling_links}\n",
+                            f"Child:: {child_links}\n",
+                            "%%\n",
+                            "\n",
+                            "---\n"] + new_content
+
+            if root not in exclude_dirs:
+                with open(filepath, 'w') as file:
+                    file.writelines(new_content)
