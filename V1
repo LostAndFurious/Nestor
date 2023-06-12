@@ -6,9 +6,9 @@ import subprocess
 from collections import defaultdict
 
 # your settings
-directory = '/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Test'
-exclude_dirs = ['/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vova/Daily Notes', 
-                '/Users/vladymirconsigny/Library/Mobile Documents/iCloud~md~obsidian/Documents/Vova/Templates']
+directory = '/path/to/directory'
+exclude_dirs = ['/path/to/directory', 
+                '/path/to/directory']
 
 link_regex = re.compile(r'\[\[(.*?)\]\]')
 relation_regex = re.compile(r'(Parent|Sibling|Child):: (.*?)\n')
